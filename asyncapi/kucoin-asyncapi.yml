@@ -1,0 +1,949 @@
+asyncapi: '2.6.0'
+info:
+  title: KuCoin Public WebSocket API
+  version: '1.0.0'
+  description: |
+    AsyncAPI 2.6 description of KuCoin's public WebSocket streaming API
+    for the Classic (Spot/Margin) account.
+
+    ## Obtaining the connection endpoint
+
+    The WebSocket endpoint and a short-lived bearer token are NOT statically
+    documented. A client must first call the REST endpoint:
+
+    `POST https://api.kucoin.com/api/v1/bullet-public`
+
+    The response contains a `token` and an `instanceServers[]` array. Each
+    `instanceServer` includes:
+
+    | Field | Type | Notes |
+    |-------|------|-------|
+    | `endpoint` | string | The wss URL (e.g. `wss://ws-api-spot.kucoin.com/`) |
+    | `protocol` | string | `websocket` |
+    | `encrypt` | boolean | `true` |
+    | `pingInterval` | integer | Milliseconds between client pings (e.g. 18000) |
+    | `pingTimeout` | integer | Milliseconds to wait for pong before disconnecting (e.g. 10000) |
+
+    Example response (truncated):
+
+    ```json
+    {
+      "code": "200000",
+      "data": {
+        "token": "2neAi...",
+        "instanceServers": [
+          {
+            "pingInterval": 18000,
+            "endpoint": "wss://ws-api-spot.kucoin.com/",
+            "protocol": "websocket",
+            "encrypt": true,
+            "pingTimeout": 10000
+          }
+        ]
+      }
+    }
+    ```
+
+    The client then opens the WebSocket using the URL:
+
+    `{endpoint}?token={token}&connectId={uniqueId}`
+
+    The connection becomes active only after the server sends a `welcome`
+    message. The client must send a `ping` envelope every `pingInterval`
+    milliseconds and consider the connection dead if no `pong` arrives within
+    `pingTimeout`.
+
+    Tokens are valid for 24 hours; clients should refresh and reconnect before
+    expiry.
+
+    Sources:
+      - https://www.kucoin.com/docs/websocket/basic-info/introduction
+      - https://www.kucoin.com/docs-new/websocket-api/base-info/introduction
+      - https://www.kucoin.com/docs/rest/websocket/get-public-token
+  contact:
+    name: KuCoin API Support
+    url: https://www.kucoin.com/docs-new
+  license:
+    name: KuCoin Terms of Service
+    url: https://www.kucoin.com/legal/terms-of-use
+  termsOfService: https://www.kucoin.com/legal/terms-of-use
+
+defaultContentType: application/json
+
+servers:
+  bulletPublic:
+    url: 'ws-api-spot.kucoin.com'
+    protocol: wss
+    description: |
+      Classic Spot/Margin public WebSocket endpoint.
+      The actual endpoint is returned by `POST /api/v1/bullet-public` and
+      must be appended with `?token={token}&connectId={uniqueId}`.
+    variables:
+      token:
+        description: Short-lived public token issued by /api/v1/bullet-public.
+        default: REPLACE_WITH_TOKEN
+      connectId:
+        description: Unique client-generated connection identifier.
+        default: REPLACE_WITH_CONNECT_ID
+
+channels:
+  '/':
+    description: |
+      Single multiplexed WebSocket connection. All KuCoin streaming traffic
+      flows over one connection; topics are subscribed/unsubscribed via JSON
+      control messages and inbound messages are routed by their `topic` and
+      `subject` fields.
+    publish:
+      operationId: clientToServer
+      summary: Control and heartbeat messages sent by the client.
+      message:
+        oneOf:
+          - $ref: '#/components/messages/SubscribeMessage'
+          - $ref: '#/components/messages/UnsubscribeMessage'
+          - $ref: '#/components/messages/PingMessage'
+    subscribe:
+      operationId: serverToClient
+      summary: Server-pushed envelopes (welcome, ack, pong, market data, private data).
+      message:
+        oneOf:
+          - $ref: '#/components/messages/WelcomeMessage'
+          - $ref: '#/components/messages/AckMessage'
+          - $ref: '#/components/messages/PongMessage'
+          - $ref: '#/components/messages/ErrorMessage'
+          - $ref: '#/components/messages/SymbolTicker'
+          - $ref: '#/components/messages/AllSymbolsTicker'
+          - $ref: '#/components/messages/SymbolSnapshot'
+          - $ref: '#/components/messages/MarketSnapshot'
+          - $ref: '#/components/messages/Level1BBO'
+          - $ref: '#/components/messages/Level2Update'
+          - $ref: '#/components/messages/Level2Depth5'
+          - $ref: '#/components/messages/Level2Depth50'
+          - $ref: '#/components/messages/Klines'
+          - $ref: '#/components/messages/Match'
+          - $ref: '#/components/messages/IndexPrice'
+          - $ref: '#/components/messages/MarkPrice'
+          - $ref: '#/components/messages/TradeOrders'
+          - $ref: '#/components/messages/TradeOrdersV2'
+          - $ref: '#/components/messages/AccountBalance'
+          - $ref: '#/components/messages/CrossMarginPosition'
+          - $ref: '#/components/messages/IsolatedMarginPosition'
+
+components:
+  messages:
+
+    SubscribeMessage:
+      name: subscribe
+      title: Subscribe
+      summary: Subscribe to a topic. Some topics support a comma-separated list of symbols (up to 100).
+      payload:
+        $ref: '#/components/schemas/SubscribeEnvelope'
+
+    UnsubscribeMessage:
+      name: unsubscribe
+      title: Unsubscribe
+      summary: Unsubscribe from a topic.
+      payload:
+        $ref: '#/components/schemas/UnsubscribeEnvelope'
+
+    PingMessage:
+      name: ping
+      title: Ping
+      summary: Heartbeat. Must be sent every `pingInterval` ms returned by /api/v1/bullet-public.
+      payload:
+        $ref: '#/components/schemas/PingEnvelope'
+
+    WelcomeMessage:
+      name: welcome
+      title: Welcome
+      summary: First message from server after the WebSocket handshake. The connection is only usable after this message is received.
+      payload:
+        $ref: '#/components/schemas/WelcomeEnvelope'
+
+    AckMessage:
+      name: ack
+      title: Subscribe/Unsubscribe Acknowledgement
+      summary: 'Sent when the client requested `"response": true` on subscribe/unsubscribe.'
+      payload:
+        $ref: '#/components/schemas/AckEnvelope'
+
+    PongMessage:
+      name: pong
+      title: Pong
+      summary: Reply to a client ping.
+      payload:
+        $ref: '#/components/schemas/PongEnvelope'
+
+    ErrorMessage:
+      name: error
+      title: Error
+      summary: Server-side error envelope.
+      payload:
+        $ref: '#/components/schemas/ErrorEnvelope'
+
+    SymbolTicker:
+      name: symbolTicker
+      title: 'Public: Symbol Ticker'
+      summary: 'Topic: `/market/ticker:{symbol}` — pushed at most once every 100ms.'
+      payload:
+        $ref: '#/components/schemas/SymbolTickerEnvelope'
+
+    AllSymbolsTicker:
+      name: allSymbolsTicker
+      title: 'Public: All Symbols Ticker'
+      summary: 'Topic: `/market/ticker:all` — ticker updates for every symbol, subject is the symbol code.'
+      payload:
+        $ref: '#/components/schemas/AllSymbolsTickerEnvelope'
+
+    SymbolSnapshot:
+      name: symbolSnapshot
+      title: 'Public: Symbol Snapshot'
+      summary: 'Topic: `/market/snapshot:{symbol}` — pushed every 2s.'
+      payload:
+        $ref: '#/components/schemas/SymbolSnapshotEnvelope'
+
+    MarketSnapshot:
+      name: marketSnapshot
+      title: 'Public: Market Snapshot'
+      summary: 'Topic: `/market/snapshot:{market}` — pushed every 2s for every symbol in a market (e.g. `BTC`, `USDS`).'
+      payload:
+        $ref: '#/components/schemas/MarketSnapshotEnvelope'
+
+    Level1BBO:
+      name: level1
+      title: 'Public: Orderbook - Best Bid/Ask (Level 1)'
+      summary: 'Topic: `/spotMarket/level1:{symbol}` — pushed at most once every 10ms when top-of-book changes.'
+      payload:
+        $ref: '#/components/schemas/Level1Envelope'
+
+    Level2Update:
+      name: level2
+      title: 'Public: Orderbook - Incremental Updates (Level 2)'
+      summary: 'Topic: `/market/level2:{symbol}` — real-time incremental updates. Subject `trade.l2update`.'
+      payload:
+        $ref: '#/components/schemas/Level2Envelope'
+
+    Level2Depth5:
+      name: level2Depth5
+      title: 'Public: Orderbook - Top 5 (Level 2 Depth 5)'
+      summary: 'Topic: `/spotMarket/level2Depth5:{symbol}` — pushed at most once every 100ms.'
+      payload:
+        $ref: '#/components/schemas/Level2DepthEnvelope'
+
+    Level2Depth50:
+      name: level2Depth50
+      title: 'Public: Orderbook - Top 50 (Level 2 Depth 50)'
+      summary: 'Topic: `/spotMarket/level2Depth50:{symbol}` — pushed at most once every 100ms.'
+      payload:
+        $ref: '#/components/schemas/Level2DepthEnvelope'
+
+    Klines:
+      name: klines
+      title: 'Public: Klines (Candles)'
+      summary: 'Topic: `/market/candles:{symbol}_{type}` — real-time OHLCV updates. Type is one of 1min,3min,15min,30min,1hour,2hour,4hour,6hour,8hour,12hour,1day,1week.'
+      payload:
+        $ref: '#/components/schemas/KlinesEnvelope'
+
+    Match:
+      name: match
+      title: 'Public: Match Execution Data'
+      summary: 'Topic: `/market/match:{symbol}` — real-time Level 3 trade matches. Subject `trade.l3match`.'
+      payload:
+        $ref: '#/components/schemas/MatchEnvelope'
+
+    IndexPrice:
+      name: indexPrice
+      title: 'Public: Index Price'
+      summary: 'Topic: `/indicator/index:{symbol}` — pushed once per second.'
+      payload:
+        $ref: '#/components/schemas/IndexPriceEnvelope'
+
+    MarkPrice:
+      name: markPrice
+      title: 'Public: Mark Price'
+      summary: 'Topic: `/indicator/markPrice:{symbol}` — pushed once per second.'
+      payload:
+        $ref: '#/components/schemas/MarkPriceEnvelope'
+
+    TradeOrders:
+      name: tradeOrders
+      title: 'Private: Trade Orders V1'
+      summary: 'Topic: `/spotMarket/tradeOrders` — real-time order lifecycle events. Requires private token.'
+      payload:
+        $ref: '#/components/schemas/TradeOrdersEnvelope'
+
+    TradeOrdersV2:
+      name: tradeOrdersV2
+      title: 'Private: Trade Orders V2'
+      summary: 'Topic: `/spotMarket/tradeOrdersV2` — real-time order lifecycle events with additional update events. Requires private token.'
+      payload:
+        $ref: '#/components/schemas/TradeOrdersV2Envelope'
+
+    AccountBalance:
+      name: accountBalance
+      title: 'Private: Account Balance'
+      summary: 'Topic: `/account/balance` — real-time balance changes. Requires private token.'
+      payload:
+        $ref: '#/components/schemas/AccountBalanceEnvelope'
+
+    CrossMarginPosition:
+      name: crossMarginPosition
+      title: 'Private: Cross Margin Position'
+      summary: 'Topic: `/margin/position` — debt ratio and position status updates. Requires private token.'
+      payload:
+        $ref: '#/components/schemas/CrossMarginPositionEnvelope'
+
+    IsolatedMarginPosition:
+      name: isolatedMarginPosition
+      title: 'Private: Isolated Margin Position'
+      summary: 'Topic: `/margin/isolatedPosition:{symbol}` — isolated margin position changes. Requires private token.'
+      payload:
+        $ref: '#/components/schemas/IsolatedMarginPositionEnvelope'
+
+  schemas:
+
+    # ---------- Control / heartbeat envelopes ----------
+
+    SubscribeEnvelope:
+      type: object
+      required: [id, type, topic]
+      properties:
+        id:
+          type: string
+          description: Client-generated message id (echoed in the ack).
+        type:
+          type: string
+          const: subscribe
+        topic:
+          type: string
+          description: Topic to subscribe to (e.g. `/market/ticker:BTC-USDT`).
+          example: /market/ticker:BTC-USDT
+        privateChannel:
+          type: boolean
+          default: false
+          description: Set to true for private topics that require a private token.
+        response:
+          type: boolean
+          default: false
+          description: 'If true, the server returns an `ack` envelope with the same id.'
+
+    UnsubscribeEnvelope:
+      type: object
+      required: [id, type, topic]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: unsubscribe
+        topic:
+          type: string
+        privateChannel:
+          type: boolean
+        response:
+          type: boolean
+
+    PingEnvelope:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: string
+          description: Arbitrary client id used to correlate with the pong.
+        type:
+          type: string
+          const: ping
+
+    WelcomeEnvelope:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: welcome
+      example:
+        id: hQvf8jkno
+        type: welcome
+
+    AckEnvelope:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: ack
+      example:
+        id: '1545910660739'
+        type: ack
+
+    PongEnvelope:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: pong
+        timestamp:
+          type: integer
+          description: Server timestamp (microseconds).
+      example:
+        id: '1545910590801'
+        type: pong
+        timestamp: 1764215232226553
+
+    ErrorEnvelope:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: error
+        code:
+          type: integer
+        data:
+          type: string
+
+    # ---------- Generic data envelope ----------
+
+    DataEnvelopeBase:
+      type: object
+      required: [type, topic, subject, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: message
+        topic:
+          type: string
+        subject:
+          type: string
+        sn:
+          type: integer
+          description: Sequence number, present on some channels.
+
+    # ---------- Public market data payloads ----------
+
+    SymbolTickerEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /market/ticker:BTC-USDT
+            subject:
+              type: string
+              example: trade.ticker
+            data:
+              $ref: '#/components/schemas/SymbolTickerData'
+
+    SymbolTickerData:
+      type: object
+      properties:
+        sequence: { type: string }
+        price: { type: string, description: Most recent transaction price. }
+        size: { type: string, description: Most recent transaction size. }
+        bestAsk: { type: string }
+        bestAskSize: { type: string }
+        bestBid: { type: string }
+        bestBidSize: { type: string }
+        time: { type: integer, description: Match timestamp (milliseconds). }
+
+    AllSymbolsTickerEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /market/ticker:all
+            subject:
+              type: string
+              description: Symbol code, e.g. `BTC-USDT`.
+              example: BTC-USDT
+            data:
+              $ref: '#/components/schemas/SymbolTickerData'
+
+    SymbolSnapshotEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /market/snapshot:BTC-USDT
+            subject:
+              type: string
+              example: trade.snapshot
+            data:
+              type: object
+              properties:
+                sequence: { type: string }
+                data:
+                  $ref: '#/components/schemas/SnapshotData'
+
+    MarketSnapshotEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /market/snapshot:BTC
+            subject:
+              type: string
+              example: trade.snapshot
+            data:
+              type: object
+              properties:
+                sequence: { type: integer }
+                data:
+                  $ref: '#/components/schemas/SnapshotData'
+
+    SnapshotData:
+      type: object
+      description: Snapshot detail object pushed every 2 seconds.
+      properties:
+        askSize: { type: number }
+        averagePrice: { type: number }
+        baseCurrency: { type: string }
+        bidSize: { type: number }
+        board: { type: integer }
+        buy: { type: number }
+        changePrice: { type: number }
+        changeRate: { type: number }
+        close: { type: number }
+        datetime: { type: integer, description: Timestamp (milliseconds). }
+        high: { type: number }
+        lastTradedPrice: { type: number }
+        low: { type: number }
+        makerCoefficient: { type: number }
+        makerFeeRate: { type: number }
+        marginTrade: { type: boolean }
+        mark: { type: integer }
+        market: { type: string }
+        marketChange1h:
+          $ref: '#/components/schemas/MarketChangeWindow'
+        marketChange4h:
+          $ref: '#/components/schemas/MarketChangeWindow'
+        marketChange24h:
+          $ref: '#/components/schemas/MarketChangeWindow'
+        markets:
+          type: array
+          items: { type: string }
+        open: { type: number }
+        quoteCurrency: { type: string }
+        sell: { type: number }
+        siteTypes:
+          type: array
+          items: { type: string }
+        sort: { type: integer }
+        symbol: { type: string }
+        symbolCode: { type: string }
+        takerCoefficient: { type: number }
+        takerFeeRate: { type: number }
+        trading: { type: boolean }
+        vol: { type: number }
+        volValue: { type: number }
+
+    MarketChangeWindow:
+      type: object
+      properties:
+        changePrice: { type: number }
+        changeRate: { type: number }
+        high: { type: number }
+        low: { type: number }
+        open: { type: number }
+        vol: { type: number }
+        volValue: { type: number }
+
+    Level1Envelope:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /spotMarket/level1:BTC-USDT
+            subject:
+              type: string
+              example: level1
+            data:
+              type: object
+              properties:
+                asks:
+                  type: array
+                  description: '[price, size] for the best ask.'
+                  items: { type: string }
+                  minItems: 2
+                  maxItems: 2
+                bids:
+                  type: array
+                  description: '[price, size] for the best bid.'
+                  items: { type: string }
+                  minItems: 2
+                  maxItems: 2
+                timestamp: { type: integer }
+
+    Level2Envelope:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /market/level2:BTC-USDT
+            subject:
+              type: string
+              example: trade.l2update
+            data:
+              type: object
+              properties:
+                symbol: { type: string }
+                sequenceStart: { type: integer }
+                sequenceEnd: { type: integer }
+                time: { type: integer }
+                changes:
+                  type: object
+                  properties:
+                    asks:
+                      type: array
+                      description: '[price, size, sequence] tuples. A size of 0 means the price level was removed.'
+                      items:
+                        type: array
+                        items: { type: string }
+                        minItems: 3
+                        maxItems: 3
+                    bids:
+                      type: array
+                      items:
+                        type: array
+                        items: { type: string }
+                        minItems: 3
+                        maxItems: 3
+
+    Level2DepthEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            subject:
+              type: string
+              example: level2
+            data:
+              type: object
+              properties:
+                asks:
+                  type: array
+                  items:
+                    type: array
+                    items: { type: string }
+                    minItems: 2
+                    maxItems: 2
+                bids:
+                  type: array
+                  items:
+                    type: array
+                    items: { type: string }
+                    minItems: 2
+                    maxItems: 2
+                timestamp: { type: integer }
+
+    KlinesEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /market/candles:BTC-USDT_1hour
+            subject:
+              type: string
+              example: trade.candles.update
+            data:
+              type: object
+              properties:
+                symbol:
+                  type: string
+                candles:
+                  type: array
+                  description: '[startTime, open, close, high, low, volume, amount] as strings.'
+                  items: { type: string }
+                  minItems: 7
+                  maxItems: 7
+                time:
+                  type: integer
+                  description: Push timestamp (nanoseconds).
+
+    MatchEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /market/match:BTC-USDT
+            subject:
+              type: string
+              example: trade.l3match
+            data:
+              type: object
+              properties:
+                symbol: { type: string }
+                sequence: { type: string }
+                side:
+                  type: string
+                  enum: [buy, sell]
+                size: { type: string }
+                price: { type: string }
+                takerOrderId: { type: string }
+                makerOrderId: { type: string }
+                tradeId: { type: string }
+                type:
+                  type: string
+                  description: Always `match` for this stream.
+                time:
+                  type: string
+                  description: Match time (nanoseconds, as a string).
+
+    IndexPriceEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /indicator/index:USDT-BTC
+            subject:
+              type: string
+              example: tick
+            data:
+              type: object
+              properties:
+                symbol: { type: string }
+                granularity: { type: integer, description: Granularity in milliseconds. }
+                timestamp: { type: integer }
+                value: { type: number }
+
+    MarkPriceEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /indicator/markPrice:USDT-BTC
+            subject:
+              type: string
+              example: tick
+            data:
+              type: object
+              properties:
+                symbol: { type: string }
+                granularity: { type: integer }
+                timestamp: { type: integer }
+                value: { type: number }
+
+    # ---------- Private user data payloads ----------
+
+    PrivateEnvelopeBase:
+      allOf:
+        - $ref: '#/components/schemas/DataEnvelopeBase'
+        - type: object
+          properties:
+            userId: { type: string }
+            channelType:
+              type: string
+              const: private
+
+    TradeOrdersEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/PrivateEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /spotMarket/tradeOrders
+            subject:
+              type: string
+              example: orderChange
+            data:
+              $ref: '#/components/schemas/TradeOrderData'
+
+    TradeOrdersV2Envelope:
+      allOf:
+        - $ref: '#/components/schemas/PrivateEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /spotMarket/tradeOrdersV2
+            subject:
+              type: string
+              example: orderChange
+            data:
+              $ref: '#/components/schemas/TradeOrderData'
+
+    TradeOrderData:
+      type: object
+      properties:
+        orderId: { type: string }
+        clientOid: { type: string }
+        symbol: { type: string }
+        side:
+          type: string
+          enum: [buy, sell]
+        orderType:
+          type: string
+          enum: [limit, market]
+        price: { type: string }
+        size: { type: string }
+        originSize: { type: string }
+        filledSize: { type: string }
+        canceledSize: { type: string }
+        remainSize: { type: string }
+        remainFunds: { type: string }
+        status:
+          type: string
+          enum: [new, open, match, done]
+        type:
+          type: string
+          description: Event type.
+          enum: [received, open, match, update, filled, canceled]
+        orderTime:
+          type: integer
+          description: Order creation timestamp (milliseconds).
+        ts:
+          type: integer
+          description: Event timestamp (nanoseconds).
+        matchPrice: { type: string }
+        matchSize: { type: string }
+        tradeId: { type: string }
+        liquidity:
+          type: string
+          enum: [taker, maker]
+        feeType: { type: string }
+        oldSize: { type: string }
+
+    AccountBalanceEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/PrivateEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /account/balance
+            subject:
+              type: string
+              example: account.balance
+            data:
+              type: object
+              properties:
+                accountId: { type: string }
+                currency: { type: string }
+                total: { type: string }
+                available: { type: string }
+                hold: { type: string }
+                availableChange: { type: string }
+                holdChange: { type: string }
+                relationContext:
+                  type: object
+                  properties:
+                    symbol: { type: string }
+                    orderId: { type: string }
+                    tradeId: { type: string }
+                relationEvent:
+                  type: string
+                  description: Event type (deposit, transfer, hold, etc.).
+                relationEventId: { type: string }
+                time:
+                  type: string
+                  description: Event timestamp (milliseconds).
+
+    CrossMarginPositionEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/PrivateEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /margin/position
+            subject:
+              type: string
+              description: Either `debt.ratio` or `position.status`.
+              enum: [debt.ratio, position.status]
+            data:
+              oneOf:
+                - $ref: '#/components/schemas/MarginDebtRatioData'
+                - $ref: '#/components/schemas/MarginPositionStatusData'
+
+    MarginDebtRatioData:
+      type: object
+      properties:
+        debtRatio: { type: number }
+        totalAsset: { type: string }
+        marginCoefficientTotalAsset: { type: string }
+        totalDebt: { type: string }
+        assetList:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              total: { type: string }
+              available: { type: string }
+              hold: { type: string }
+        debtList:
+          type: object
+          additionalProperties:
+            type: string
+        timestamp: { type: integer }
+
+    MarginPositionStatusData:
+      type: object
+      properties:
+        type:
+          type: string
+          description: Position status (e.g. `FROZEN_FL`).
+        timestamp: { type: integer }
+
+    IsolatedMarginPositionEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/PrivateEnvelopeBase'
+        - type: object
+          properties:
+            topic:
+              type: string
+              example: /margin/isolatedPosition:BTC-USDT
+            subject:
+              type: string
+              example: positionChange
+            data:
+              type: object
+              properties:
+                tag:
+                  type: string
+                  description: Isolated trading pair symbol.
+                status:
+                  type: string
+                  description: Position status (e.g. `DEBT`).
+                statusBizType:
+                  type: string
+                accumulatedPrincipal: { type: string }
+                changeAssets:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      total: { type: string }
+                      hold: { type: string }
+                      liabilityPrincipal: { type: string }
+                      liabilityInterest: { type: string }
+                timestamp: { type: integer }
