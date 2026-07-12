@@ -25,10 +25,14 @@ apis:
       - type: AsyncAPI
         url: https://raw.githubusercontent.com/api-evangelist/kucoin/main/asyncapi/kucoin-asyncapi.yml
 common:
+  - type: DomainSecurity
+    url: security/kucoin-domain-security.yml
   - type: Website
     url: https://docs.kucoin.com/
   - type: PublicAPIsListing
     url: https://github.com/public-apis/public-apis
+  - url: https://www.kucoin.com/blog
+    type: Blog
 maintainers:
   - FN: Kin Lane
     email: kin@apievangelist.com
